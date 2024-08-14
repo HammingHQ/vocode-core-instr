@@ -6,7 +6,9 @@ import random
 import typing
 from enum import Enum
 from typing import TYPE_CHECKING, AsyncGenerator, Dict, Generic, Optional, Tuple, TypeVar, Union
+import os
 
+from dotenv import load_dotenv
 import sentry_sdk
 from loguru import logger
 from pydantic.v1 import BaseModel
@@ -45,6 +47,16 @@ from vocode.streaming.utils.worker import (
     InterruptibleWorker,
 )
 from vocode.utils.sentry_utils import CustomSentrySpans, sentry_create_span
+from hamming import (Hamming, ClientOptions)
+
+load_dotenv()
+
+hamming = Hamming(ClientOptions(
+    base_url=os.getenv("HAMMING_BASE_URL"),
+    api_key=os.getenv("HAMMING_API_KEY")
+))
+
+hamming.monitoring.start()
 
 if TYPE_CHECKING:
     from vocode.streaming.utils.state_manager import AbstractConversationStateManager
@@ -320,6 +332,22 @@ class RespondAgent(BaseAgent[AgentConfigType]):
                     return True
             is_first_response_of_turn = False
 
+        with hamming.monitoring.start_item(input=[
+            {
+                "role": "user",
+                "content": transcription.message
+            }
+        ]) as item:
+            item.set_metadata({
+                "hamming_conversation_id": conversation_id
+            })
+            output_message = {
+                "role": "assistant",
+                "content": responses_buffer
+            }
+            if function_call:
+                output_message["tool_calls"] = [function_call.dict()]
+            item.set_output([output_message])
         # if the client (the implemented agent) doesn't create an EndOfTurn, then we need to create one
         if not end_of_turn_agent_response_tracker:
             end_of_turn_agent_response_tracker = (
